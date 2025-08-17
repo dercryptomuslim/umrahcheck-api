@@ -37,10 +37,11 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS
+# CORS - Production-ready
+origins = os.getenv("FRONTEND_ORIGINS", "https://umrahcheck.vercel.app,https://umrahcheck.de,https://www.umrahcheck.de,http://localhost:3000")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in origins.split(",")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -463,6 +464,11 @@ async def get_statistics():
 async def health():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+@app.get("/healthz")
+async def healthz():
+    """Railway health check endpoint"""
+    return {"ok": True}
 
 if __name__ == "__main__":
     import uvicorn
