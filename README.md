@@ -36,3 +36,4 @@ PORT=8080
 Frontend expects API at:
 - Development: http://localhost:8080
 - Production: https://umrahcheck-mvp-production.up.railway.app
+# Force rebuild: Mon Aug 18 09:35:38 +03 2025
