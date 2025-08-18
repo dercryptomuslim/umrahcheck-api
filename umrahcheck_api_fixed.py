@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import json
 import os
 import requests
+import sentry_sdk
 
 # Initialize Sentry monitoring
 from sentry_config import (
