@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 🚀 UmrahCheck Fixed API - Working with both Field Names and IDs
-Production-ready API for Airtable Integration
+Production-ready API for Airtable Integration with Sentry Monitoring
 """
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +14,20 @@ import json
 import os
 import requests
 
-logger = logging.getLogger(__name__)
+# Initialize Sentry monitoring
+from sentry_config import (
+    init_sentry, 
+    capture_api_error, 
+    set_transaction_context,
+    track_airtable_request,
+    track_hotel_recommendation,
+    get_logger
+)
+from debug_sentry import router as debug_router
+from playwright_scraper import scrape_hotel_prices_with_customer_dates, get_scraper
+init_sentry()
+
+logger = get_logger(__name__)
 
 # Pydantic Models
 class HotelPriceRequest(BaseModel):
@@ -22,6 +35,10 @@ class HotelPriceRequest(BaseModel):
     city: str = Field(..., description="Stadt (Makkah oder Medina)")
     checkin_date: str = Field(..., description="Check-in Datum (YYYY-MM-DD)")
     checkout_date: str = Field(..., description="Check-out Datum (YYYY-MM-DD)")
+    adults: int = Field(default=2, description="Anzahl Erwachsene")
+    rooms: int = Field(default=1, description="Anzahl Zimmer")
+    children: int = Field(default=0, description="Anzahl Kinder")
+    currency: str = Field(default="EUR", description="Währung (EUR, USD, SAR)")
 
 class CustomerRecommendationRequest(BaseModel):
     city: str = Field(..., description="Zielstadt")
@@ -185,7 +202,9 @@ async def get_all_hotels():
             'Content-Type': 'application/json'
         }
         
-        response = requests.get(url, headers=headers)
+        # Track Airtable request with Sentry
+        with track_airtable_request("get_all_hotels"):
+            response = requests.get(url, headers=headers)
         
         if response.status_code == 200:
             data = response.json()
@@ -260,24 +279,60 @@ async def get_all_hotels():
 @app.post("/api/hotels/live-prices")
 async def get_live_hotel_prices(request: HotelPriceRequest):
     """
-    Simulate live hotel prices (without Playwright for now)
-    In production, this would use Playwright for real scraping
+    Get REAL live hotel prices using Playwright web scraping
+    Scrapes from Booking.com and Hotels.com
     """
     try:
-        # Simulated price data based on hotel name and city
-        base_price = 350  # Default
+        # First try to get real prices with Playwright
+        use_real_prices = os.getenv("ENABLE_PLAYWRIGHT", "false").lower() == "true"
         
-        # Price based on hotel name
-        if "Swissôtel" in request.hotel_name or "Swiss" in request.hotel_name:
-            base_price = 450
-        elif "Conrad" in request.hotel_name or "Hyatt" in request.hotel_name:
-            base_price = 600
-        elif "Hilton" in request.hotel_name or "Sheraton" in request.hotel_name:
-            base_price = 500
-        elif "InterContinental" in request.hotel_name:
-            base_price = 550
-        elif "Oberoi" in request.hotel_name or "Mövenpick" in request.hotel_name:
-            base_price = 650
+        if use_real_prices:
+            logger.info(f"🎭 Scraping real prices for {request.hotel_name}")
+            
+            # Use Playwright to get real prices with customer data
+            scraped_data = await scrape_hotel_prices_with_customer_dates(
+                hotel_name=request.hotel_name,
+                city=request.city,
+                checkin=request.checkin_date,
+                checkout=request.checkout_date,
+                adults=request.adults,
+                rooms=request.rooms,
+                children=request.children,
+                currency=request.currency
+            )
+            
+            if scraped_data.get("best_price"):
+                # Use real scraped price
+                base_price = scraped_data["best_price"]["price_per_night"]
+                total_price = scraped_data["best_price"]["total_price"]
+                price_source = scraped_data["best_price"]["platform"]
+                commission_url = scraped_data["best_price"]["url"]
+                scraped_results = scraped_data.get("results", [])
+            else:
+                # Fallback to simulation if scraping fails
+                logger.warning("Scraping failed, using simulated prices")
+                use_real_prices = False
+                scraped_results = []
+        
+        if not use_real_prices:
+            # Simulated price data based on hotel name and city
+            base_price = 350  # Default
+            price_source = "simulation"
+            commission_url = None
+        
+        # Only apply simulated pricing if not using real prices
+        if not use_real_prices:
+            # Price based on hotel name
+            if "Swissôtel" in request.hotel_name or "Swiss" in request.hotel_name:
+                base_price = 450
+            elif "Conrad" in request.hotel_name or "Hyatt" in request.hotel_name:
+                base_price = 600
+            elif "Hilton" in request.hotel_name or "Sheraton" in request.hotel_name:
+                base_price = 500
+            elif "InterContinental" in request.hotel_name:
+                base_price = 550
+            elif "Oberoi" in request.hotel_name or "Mövenpick" in request.hotel_name:
+                base_price = 650
         
         nights = (datetime.fromisoformat(request.checkout_date) - datetime.fromisoformat(request.checkin_date)).days
         
@@ -295,24 +350,27 @@ async def get_live_hotel_prices(request: HotelPriceRequest):
                         "price_per_night": base_price,
                         "total_price": base_price * nights,
                         "currency": "EUR",
-                        "confidence": 0.95,
-                        "commission_link": f"https://umrahcheck.com/out?src=booking&hotel={request.hotel_name.replace(' ', '_')}"
+                        "confidence": 0.95 if use_real_prices else 0.60,
+                        "commission_link": commission_url or f"https://umrahcheck.com/out?src=booking&hotel={request.hotel_name.replace(' ', '_')}",
+                        "is_real_price": use_real_prices
                     },
                     "halalbooking.com": {
                         "price_per_night": base_price - 30,
                         "total_price": (base_price - 30) * nights,
                         "currency": "EUR",
-                        "confidence": 0.90,
+                        "confidence": 0.90 if use_real_prices else 0.55,
                         "halal_certified": True,
-                        "commission_link": f"https://umrahcheck.com/out?src=halalbooking&hotel={request.hotel_name.replace(' ', '_')}"
+                        "commission_link": f"https://umrahcheck.com/out?src=halalbooking&hotel={request.hotel_name.replace(' ', '_')}",
+                        "is_real_price": False
                     }
-                },
-                "best_price": {
+                } if not use_real_prices else scraped_data.get("results", {}),
+                "best_price": scraped_data.get("best_price") if use_real_prices else {
                     "source": "halalbooking.com",
                     "price_per_night": base_price - 30,
                     "total_savings": 30 * nights,
                     "currency": "EUR"
-                }
+                },
+                "data_source": price_source
             },
             "umrah_features": {
                 "distance_to_haram": "500m" if request.city == "Makkah" else "300m",
@@ -332,132 +390,232 @@ async def get_live_hotel_prices(request: HotelPriceRequest):
 @app.post("/api/customers/recommendations")
 async def get_customer_recommendations(request: CustomerRecommendationRequest):
     """Get personalized hotel recommendations with FIXED field mapping"""
+    
+    # Track recommendation query with Sentry
+    with track_hotel_recommendation(request.city, request.budget_category):
+        try:
+            # Get hotels from Airtable
+            url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}"
+            headers = {
+                'Authorization': f'Bearer {AIRTABLE_API_TOKEN}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Track Airtable request
+            with track_airtable_request("get_recommendations"):
+                response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                all_records = data.get('records', [])
+            
+                # Filter by criteria with FIXED field mapping
+                recommendations = []
+                debug_info = []
+            
+                for record in all_records:
+                    fields = record.get('fields', {})
+                
+                    # Use flexible field mapping
+                    city = (
+                        get_field_value(fields, 'City') or 
+                        get_field_value(fields, 'fldXAnrSXjvXHJpQi') or 
+                        ''
+                    )
+                    
+                    budget_category = (
+                        get_field_value(fields, 'Budget Category') or 
+                        get_field_value(fields, 'fldtDXCaCTswPWfVB') or 
+                        ''
+                    )
+                    
+                    status = (
+                        get_field_value(fields, 'Status') or 
+                        get_field_value(fields, 'fldDymYWkR69Nr4oA') or 
+                        ''
+                    )
+                    
+                    hotel_name = (
+                        get_field_value(fields, 'Hotel Name') or 
+                        get_field_value(fields, 'name') or 
+                        get_field_value(fields, 'fld6zhTTka59MM2e7') or 
+                        'Unknown'
+                    )
+                    
+                    # Debug info for first few records
+                    if len(debug_info) < 3:
+                        debug_info.append({
+                            'hotel_name': hotel_name,
+                            'city': city,
+                            'budget_category': budget_category,
+                            'status': status,
+                            'matches_city': city == request.city,
+                            'matches_budget': budget_category == request.budget_category,
+                            'is_active': status == 'Active'
+                        })
+                    
+                    # Check if matches criteria
+                    if (city == request.city and 
+                        budget_category == request.budget_category and
+                        status == 'Active'):
+                        
+                        # Price simulation based on budget category
+                        if budget_category == 'Ultra-Luxury':
+                            simulated_price = 650
+                        elif budget_category == 'Luxury':
+                            simulated_price = 450
+                        elif budget_category == 'Mid-Range':
+                            simulated_price = 250
+                        else:  # Budget
+                            simulated_price = 150
+                        
+                        recommendations.append({
+                            'hotel_name': hotel_name,
+                            'arabic_name': get_field_value(fields, 'Arabic Name', 'fldpmj5JsJwsUlFTwLong'),
+                            'star_rating': get_field_value(fields, 'Star Rating', 'fldMao5hjSxPnPge1'),
+                            'city': city,
+                            'budget_category': budget_category,
+                            'simulated_price': {
+                                'per_night': simulated_price,
+                                'currency': 'EUR',
+                                'commission_link': f"https://umrahcheck.com/out?hotel={hotel_name.replace(' ', '_')}"
+                            },
+                            'umrah_features': {
+                                'halal_certified': True,
+                                'distance_to_haram': '500m' if city == 'Makkah' else '300m',
+                                'prayer_facilities': True,
+                                'shuttle_service': True
+                            }
+                        })
+            
+                return {
+                    "query": {
+                        "city": request.city,
+                        "budget_category": request.budget_category,
+                        "halal_required": request.halal_required
+                    },
+                    "total_recommendations": len(recommendations),
+                    "recommendations": recommendations,
+                    "message": f"Found {len(recommendations)} hotels matching your criteria",
+                    "debug_info": debug_info if len(recommendations) == 0 else None
+                }
+            else:
+                raise HTTPException(status_code=response.status_code, detail=response.text)
+                
+        except Exception as e:
+            logger.error(f"Recommendations failed: {e}")
+            capture_api_error(e, {
+                "endpoint": "/api/customers/recommendations",
+                "city": request.city,
+                "budget": request.budget_category
+            })
+            raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/hotels/scrape-prices")
+async def scrape_hotel_prices_endpoint(request: HotelPriceRequest):
+    """
+    Direct endpoint to scrape hotel prices using Playwright
+    This bypasses simulation and always uses real scraping
+    """
     try:
-        # Get hotels from Airtable
-        url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}"
-        headers = {
-            'Authorization': f'Bearer {AIRTABLE_API_TOKEN}',
-            'Content-Type': 'application/json'
-        }
+        logger.info(f"🎭 Direct scraping request for {request.hotel_name}")
         
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code == 200:
-            data = response.json()
-            all_records = data.get('records', [])
-            
-            # Filter by criteria with FIXED field mapping
-            recommendations = []
-            debug_info = []
-            
-            for record in all_records:
-                fields = record.get('fields', {})
-                
-                # Use flexible field mapping
-                city = (
-                    get_field_value(fields, 'City') or 
-                    get_field_value(fields, 'fldXAnrSXjvXHJpQi') or 
-                    ''
-                )
-                
-                budget_category = (
-                    get_field_value(fields, 'Budget Category') or 
-                    get_field_value(fields, 'fldtDXCaCTswPWfVB') or 
-                    ''
-                )
-                
-                status = (
-                    get_field_value(fields, 'Status') or 
-                    get_field_value(fields, 'fldDymYWkR69Nr4oA') or 
-                    ''
-                )
-                
-                hotel_name = (
-                    get_field_value(fields, 'Hotel Name') or 
-                    get_field_value(fields, 'name') or 
-                    get_field_value(fields, 'fld6zhTTka59MM2e7') or 
-                    'Unknown'
-                )
-                
-                # Debug info for first few records
-                if len(debug_info) < 3:
-                    debug_info.append({
-                        'hotel_name': hotel_name,
-                        'city': city,
-                        'budget_category': budget_category,
-                        'status': status,
-                        'matches_city': city == request.city,
-                        'matches_budget': budget_category == request.budget_category,
-                        'is_active': status == 'Active'
-                    })
-                
-                # Check if matches criteria
-                if (city == request.city and 
-                    budget_category == request.budget_category and
-                    status == 'Active'):
-                    
-                    # Price simulation based on budget category
-                    if budget_category == 'Ultra-Luxury':
-                        simulated_price = 650
-                    elif budget_category == 'Luxury':
-                        simulated_price = 450
-                    elif budget_category == 'Mid-Range':
-                        simulated_price = 250
-                    else:  # Budget
-                        simulated_price = 150
-                    
-                    recommendations.append({
-                        'hotel_name': hotel_name,
-                        'arabic_name': get_field_value(fields, 'Arabic Name', 'fldpmj5JsJwsUlFTwLong'),
-                        'star_rating': get_field_value(fields, 'Star Rating', 'fldMao5hjSxPnPge1'),
-                        'city': city,
-                        'budget_category': budget_category,
-                        'simulated_price': {
-                            'per_night': simulated_price,
-                            'currency': 'EUR',
-                            'commission_link': f"https://umrahcheck.com/out?hotel={hotel_name.replace(' ', '_')}"
-                        },
-                        'umrah_features': {
-                            'halal_certified': True,
-                            'distance_to_haram': '500m' if city == 'Makkah' else '300m',
-                            'prayer_facilities': True,
-                            'shuttle_service': True
-                        }
-                    })
+        # Track with Sentry
+        with sentry_sdk.start_span(op="api.scrape", description=f"Scrape {request.hotel_name}"):
+            scraped_data = await scrape_hotel_prices_with_customer_dates(
+                hotel_name=request.hotel_name,
+                city=request.city,
+                checkin=request.checkin_date,
+                checkout=request.checkout_date,
+                adults=request.adults,
+                rooms=request.rooms,
+                children=request.children,
+                currency=request.currency
+            )
             
             return {
-                "query": {
-                    "city": request.city,
-                    "budget_category": request.budget_category,
-                    "halal_required": request.halal_required
-                },
-                "total_recommendations": len(recommendations),
-                "recommendations": recommendations,
-                "message": f"Found {len(recommendations)} hotels matching your criteria",
-                "debug_info": debug_info if len(recommendations) == 0 else None
+                "status": "success",
+                "data": scraped_data,
+                "message": "Real-time prices scraped successfully"
             }
-        else:
-            raise HTTPException(status_code=response.status_code, detail=response.text)
-            
+    
     except Exception as e:
-        logger.error(f"Recommendations failed: {e}")
+        logger.error(f"Scraping failed: {e}")
+        capture_api_error(e, {
+            "endpoint": "/api/hotels/scrape-prices",
+            "hotel": request.hotel_name,
+            "city": request.city
+        })
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/stats")
 async def get_statistics():
     """Get API statistics"""
+    
+    # Check if Playwright is available
+    playwright_available = os.getenv("ENABLE_PLAYWRIGHT", "false").lower() == "true"
+    
     return {
         "api_status": "operational",
         "airtable_connected": True,
-        "playwright_available": False,  # Will be true when we add Playwright
+        "playwright_available": playwright_available,
         "features": {
-            "live_pricing": "simulated",
+            "live_pricing": "real" if playwright_available else "simulated",
             "recommendations": "active_fixed",
             "commission_tracking": "ready",
-            "field_mapping": "flexible"
+            "field_mapping": "flexible",
+            "web_scraping": "enabled" if playwright_available else "disabled"
         },
-        "version": "1.1.0 - Fixed Field Mapping",
+        "version": "1.2.0 - Playwright Integration",
         "timestamp": datetime.now().isoformat()
+    }
+
+# Include debug router for Sentry testing
+app.include_router(debug_router, prefix="/api")
+
+# Startup and shutdown events for Playwright
+@app.on_event("startup")
+async def startup_event():
+    """Initialize Playwright on startup if enabled"""
+    if os.getenv("ENABLE_PLAYWRIGHT", "false").lower() == "true":
+        try:
+            logger.info("🎭 Initializing Playwright browser...")
+            await get_scraper()
+            logger.info("✅ Playwright ready for web scraping")
+        except Exception as e:
+            logger.error(f"Failed to initialize Playwright: {e}")
+            # Don't fail startup, just disable Playwright
+            os.environ["ENABLE_PLAYWRIGHT"] = "false"
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup Playwright on shutdown"""
+    global scraper_instance
+    from playwright_scraper import scraper_instance
+    if scraper_instance:
+        logger.info("🎭 Closing Playwright browser...")
+        await scraper_instance.close()
+
+@app.get("/sentry-debug")
+async def trigger_error():
+    """Trigger a test error for Sentry verification"""
+    division_by_zero = 1 / 0
+
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "name": "UmrahCheck API",
+        "version": "1.2.0",
+        "endpoints": [
+            "/docs",
+            "/api/stats",
+            "/api/hotels",
+            "/api/hotels/live-prices",
+            "/api/hotels/scrape-prices",
+            "/api/customers/recommendations",
+            "/health"
+        ]
     }
 
 @app.get("/health")
