@@ -9,10 +9,18 @@ import uvicorn
 from umrahcheck_api_fixed import app
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8080))
+    # Railway deployment fix - handle PORT environment variable properly
+    try:
+        port = int(os.getenv("PORT", "8080"))
+    except (ValueError, TypeError):
+        port = 8080
+    
+    print(f"🚀 Starting UmrahCheck API on port {port}")
+    
     uvicorn.run(
-        "main:app",
+        app,  # Direct app reference instead of string
         host="0.0.0.0",
         port=port,
-        reload=False
+        reload=False,
+        log_level="info"
     )
