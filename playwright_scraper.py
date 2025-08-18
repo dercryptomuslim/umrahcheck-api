@@ -286,12 +286,12 @@ class HotelPriceScraper:
                 
                     await page.close()
                     return result
-                
-            except Exception as e:
-                logger.error(f"Booking.com scraping failed: {e}")
-                sentry_sdk.capture_exception(e)
-                
-                return HotelPriceResult(
+                    
+                except Exception as e:
+                    logger.error(f"Booking.com scraping failed: {e}")
+                    sentry_sdk.capture_exception(e)
+                    
+                    return HotelPriceResult(
                     hotel_name=hotel_name,
                     platform="Booking.com",
                     price=0,
@@ -351,10 +351,15 @@ class HotelPriceScraper:
                         platform="Hotels.com",
                         price=price,
                         currency="EUR",
-                        room_type="Standard",
+                        total_price=price,
+                        nights=1,
                         availability=price > 0,
                         scraped_at=datetime.now(),
-                        url=url
+                        url=url,
+                        checkin=checkin,
+                        checkout=checkout,
+                        adults=2,
+                        rooms=1
                     )
                 else:
                     result = HotelPriceResult(
@@ -362,10 +367,15 @@ class HotelPriceScraper:
                         platform="Hotels.com",
                         price=0,
                         currency="EUR",
-                        room_type="",
+                        total_price=0,
+                        nights=1,
                         availability=False,
                         scraped_at=datetime.now(),
                         url=url,
+                        checkin=checkin,
+                        checkout=checkout,
+                        adults=2,
+                        rooms=1,
                         error="No results found"
                     )
                 
@@ -381,10 +391,15 @@ class HotelPriceScraper:
                     platform="Hotels.com",
                     price=0,
                     currency="EUR",
-                    room_type="",
+                    total_price=0,
+                    nights=1,
                     availability=False,
                     scraped_at=datetime.now(),
                     url="",
+                    checkin=checkin,
+                    checkout=checkout,
+                    adults=2,
+                    rooms=1,
                     error=str(e)
                 )
     
