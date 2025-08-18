@@ -7,6 +7,11 @@ import logging
 def init_sentry():
     """Initialize Sentry for FastAPI backend with UmrahCheck configuration"""
     
+    # Temporary disable for deployment fix
+    if os.getenv('DISABLE_SENTRY', 'false').lower() == 'true':
+        print("⚠️ Sentry disabled via DISABLE_SENTRY environment variable")
+        return
+    
     # Use the provided DSN directly (same as frontend for now)
     sentry_dsn = "https://d5f99134cd8bdcc0e3154295e60dd883@o4509861037080576.ingest.de.sentry.io/4509861255184464"
     environment = os.getenv('ENVIRONMENT', 'development')
@@ -35,17 +40,13 @@ def init_sentry():
         # Integrations
         integrations=[
             FastApiIntegration(
-                transaction_style="endpoint",
-                failed_request_status_codes=[400, 401, 403, 404, 405, 500, 501, 502, 503, 504]
+                transaction_style="endpoint"
             ),
             logging_integration,
         ],
         
         # Custom error filtering
         before_send=filter_errors,
-        
-        # Session tracking
-        profiles_sample_rate=1.0 if environment == 'development' else 0.1,
         
         # Tags
         tags={
