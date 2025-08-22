@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Main entry point for Railway deployment with MCP integration
+Main entry point for Railway deployment
 """
 import os
 import uvicorn
 
-# Import the MCP-integrated app
-from umrahcheck_api_with_mcp import app
+# Import the Airtable API app
+from umrahcheck_api_fixed import app
 
 if __name__ == "__main__":
     # Railway deployment fix - handle PORT environment variable properly
@@ -15,10 +15,10 @@ if __name__ == "__main__":
     except (ValueError, TypeError):
         port = 8080
     
-    print(f"🚀 Starting UmrahCheck API with MCP Agent on port {port}")
+    print(f"🚀 Starting UmrahCheck API on port {port}")
     
     uvicorn.run(
-        app,  # Direct app reference
+        app,  # Direct app reference instead of string
         host="0.0.0.0",
         port=port,
         reload=False,
