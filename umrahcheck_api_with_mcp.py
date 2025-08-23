@@ -170,6 +170,46 @@ async def root():
         "compliance": "MCP endpoints use partner APIs only"
     }
 
+# ============= LEGACY COMPATIBILITY ENDPOINTS =============
+
+@app.post("/api/lead-with-budget")
+async def legacy_lead_with_budget_endpoint(request: FrontendLeadRequest):
+    """
+    🔄 Legacy compatibility endpoint - redirects to MCP search
+    Maintains backwards compatibility for existing frontend integrations
+    """
+    try:
+        logger.info(f"📥 Legacy API call for: {request.first_name} {request.last_name}")
+        
+        # Use the MCP compliance search
+        mcp_result = await mcp_search_endpoint(request, BackgroundTasks())
+        
+        # Transform to legacy format
+        legacy_response = {
+            "success": mcp_result.success,
+            "message": f"MCP Agent processed: {mcp_result.message}",
+            "lead_token": mcp_result.lead_token,
+            "options_found": len(mcp_result.options) if mcp_result.options else 0,
+            "processing_time_ms": mcp_result.processing_time_ms,
+            "mcp_redirect": True,
+            "data": {
+                "options": mcp_result.options,
+                "meta": mcp_result.meta,
+                "assumptions": mcp_result.assumptions
+            }
+        }
+        
+        return legacy_response
+        
+    except Exception as e:
+        logger.error(f"❌ Legacy endpoint failed: {e}")
+        return {
+            "success": False,
+            "message": f"Legacy endpoint error: {str(e)}",
+            "mcp_redirect": True,
+            "recommended_endpoint": "/v2/mcp/search"
+        }
+
 # Placeholder for existing endpoints (would copy from original file)
 # These maintain backward compatibility
 
