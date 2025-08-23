@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """
-Main entry point for Railway deployment with MCP LIVE integration
+🔥 FORCE MCP LIVE: Main entry point for Railway deployment with MCP LIVE integration
 Uses real-time data sources: Playwright scraper + RapidAPI + Airtable
+Updated: 2025-08-23 - Force Live System Activation
 """
 import os
 import uvicorn
 
-# Import the MCP-LIVE-integrated app
+# 🚨 FORCE IMPORT: MCP-LIVE-integrated app (v2.2.0-live)
 from umrahcheck_api_with_mcp_live import app
+
+# Verify we're importing the correct live app
+print(f"🔥 LIVE APP VERIFICATION:")
+print(f"   📱 App Title: {app.title}")
+print(f"   🚀 App Version: {app.version}")
+print(f"   📊 Expected: UmrahCheck API with MCP LIVE Agent v2.2.0-live")
 
 if __name__ == "__main__":
     # Railway deployment fix - handle PORT environment variable properly
