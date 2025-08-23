@@ -8,13 +8,28 @@ import os
 import uvicorn
 
 # 🚨 FORCE IMPORT: MCP-LIVE-integrated app (v2.2.0-live)
-from umrahcheck_api_with_mcp_live import app
+# IMPORTANT: Import the LIVE version explicitly, not the mock version
+import sys
+import os
 
-# Verify we're importing the correct live app
-print(f"🔥 LIVE APP VERIFICATION:")
-print(f"   📱 App Title: {app.title}")
-print(f"   🚀 App Version: {app.version}")
-print(f"   📊 Expected: UmrahCheck API with MCP LIVE Agent v2.2.0-live")
+try:
+    from umrahcheck_api_with_mcp_live import app as live_app
+    app = live_app
+    print(f"✅ SUCCESS: Imported LIVE MCP app")
+    print(f"   📱 App Title: {app.title}")
+    print(f"   🚀 App Version: {app.version}")
+    
+    # Verify it's the live version
+    if "LIVE" in app.title and "2.2.0" in app.version:
+        print(f"🔥 VERIFIED: Live MCP Agent v{app.version} activated!")
+    else:
+        print(f"⚠️  WARNING: Unexpected app version - {app.version}")
+        
+except ImportError as e:
+    print(f"❌ ERROR: Could not import LIVE MCP app: {e}")
+    print(f"🔄 Falling back to mock version...")
+    from umrahcheck_api_with_mcp_mock import app
+    print(f"⚠️  FALLBACK: Using mock version {app.version}")
 
 if __name__ == "__main__":
     # Railway deployment fix - handle PORT environment variable properly

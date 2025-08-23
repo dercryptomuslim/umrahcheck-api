@@ -400,6 +400,42 @@ async def root():
         ]
     }
 
+# ============= LEGACY COMPATIBILITY ENDPOINTS =============
+
+@app.post("/api/lead-with-budget")
+async def legacy_lead_with_budget_endpoint(request: FrontendLeadRequest):
+    """
+    🔄 Legacy compatibility endpoint - redirects to new MCP search
+    Maintains backwards compatibility for existing integrations
+    """
+    try:
+        logger.info(f"📥 Legacy API call redirected to MCP: {request.first_name} {request.last_name}")
+        
+        # Redirect to new MCP search endpoint
+        mcp_result = await mcp_live_search_endpoint(request, BackgroundTasks())
+        
+        # Transform response to legacy format if needed
+        legacy_response = {
+            "success": mcp_result.success,
+            "message": f"Legacy endpoint → MCP Agent: {mcp_result.message}",
+            "lead_token": mcp_result.lead_token,
+            "options_found": len(mcp_result.options) if mcp_result.options else 0,
+            "mcp_redirect": True,
+            "new_endpoint": "/v2/mcp/search",
+            "data": mcp_result.model_dump() if hasattr(mcp_result, 'model_dump') else mcp_result
+        }
+        
+        return legacy_response
+        
+    except Exception as e:
+        logger.error(f"❌ Legacy endpoint failed: {e}")
+        return {
+            "success": False,
+            "message": f"Legacy endpoint error: {str(e)}",
+            "mcp_redirect": True,
+            "new_endpoint": "/v2/mcp/search"
+        }
+
 # ============= HEALTH ENDPOINTS =============
 
 @app.get("/health")
